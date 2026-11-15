@@ -1,0 +1,633 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>웹서비스설계 9주차 실습 · 검색·정렬·페이지네이션</title>
+  <style>
+    :root {
+      --primary: #0066cc;
+      --ink: #161a22;
+      --muted: #596579;
+      --line: #dce1eb;
+      --light: #f6f8fb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 30px;
+      background: #e6e8ed;
+      font-family: Arial, "Malgun Gothic", sans-serif;
+      color: var(--ink);
+    }
+
+    .wrapper {
+      max-width: 1500px;
+      margin: auto;
+      display: grid;
+      grid-template-columns: 58fr 42fr;
+      gap: 24px;
+      align-items: start;
+    }
+
+    .panel {
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 24px 28px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+    }
+
+    header {
+      margin-bottom: 20px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 16px;
+    }
+
+    h1 {
+      font-size: 24px;
+      margin: 0 0 6px;
+    }
+
+    header p {
+      font-size: 15px;
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .tab-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .tab-btn {
+      padding: 8px 16px;
+      border: 1px solid var(--line);
+      background: var(--light);
+      border-radius: 6px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .tab-btn.active {
+      background: var(--primary);
+      color: white;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+      background: #fafbfe;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    input, select {
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      min-width: 0;
+    }
+
+    input { flex: 1; }
+
+    button { cursor: pointer; }
+
+    .btn {
+      padding: 8px 16px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-weight: bold;
+    }
+
+    .btn:disabled {
+      background: #8d9aaf;
+      cursor: default;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      min-height: 420px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th {
+      background: var(--light);
+      color: var(--muted);
+      text-align: left;
+      padding: 10px;
+      border-bottom: 2px solid var(--line);
+    }
+
+    td {
+      padding: 11px;
+      border-bottom: 1px solid #edf0f5;
+    }
+
+    .paging-bar, .more-wrap {
+      display: flex;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 20px;
+    }
+
+    .page-btn {
+      padding: 5px 12px;
+      border: 1px solid var(--line);
+      background: white;
+      border-radius: 4px;
+    }
+
+    .page-btn.active {
+      background: var(--primary);
+      color: white;
+    }
+
+    .inspector-title {
+      color: var(--primary);
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+
+    .code-block {
+      background: var(--light);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      font: 13px/1.5 Consolas, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      margin-bottom: 14px;
+    }
+
+    .json {
+      max-height: 180px;
+      overflow-y: auto;
+      color: #047857;
+    }
+
+    .badge-latency {
+      float: right;
+      color: #0d8a4f;
+    }
+
+    @media (max-width: 900px) {
+      .wrapper { grid-template-columns: 1fr; }
+      .controls { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="wrapper">
+  <div class="panel">
+    <header>
+      <h1>게시판 클라이언트 (SPA 환경)</h1>
+      <p>1,000건의 데이터에서 검색, 정렬, 오프셋과 커서 페이징을 테스트합니다.</p>
+    </header>
+
+    <div class="tab-bar">
+      <button class="tab-btn active" id="tabOffset"
+        onclick="switchMode('offset')">
+        오프셋 번호 페이징 (LIMIT/OFFSET)
+      </button>
+      <button class="tab-btn" id="tabCursor"
+        onclick="switchMode('cursor')">
+        커서 기반 페이징 (WHERE id &lt; ?)
+      </button>
+    </div>
+
+    <div class="controls">
+      <input type="text" id="searchInput"
+        placeholder="검색어 입력 (300ms 디바운스)">
+      <select id="sortSelect">
+        <option value="latest">최신순 (created_at DESC, id DESC)</option>
+        <option value="views">조회수순 (views DESC, id DESC)</option>
+        <option value="oldest">오래된순 (created_at ASC, id ASC)</option>
+      </select>
+      <button class="btn" onclick="applySearch()">조회</button>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>번호</th>
+            <th>제목</th>
+            <th>작성자</th>
+            <th>조회수</th>
+            <th>작성일</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+
+    <div class="paging-bar" id="paginationBar"></div>
+
+    <div class="more-wrap" id="cursorMoreWrap" style="display:none;">
+      <button class="btn" id="btnMore" onclick="loadMoreCursor()">
+        다음 10개 더 불러오기 (Keyset)
+      </button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <header>
+      <h1>백엔드 &amp; DB 파이프라인 검사기</h1>
+      <p>HTTP 요청, SQL 참고 예시, JSON 응답을 확인합니다.</p>
+    </header>
+
+    <div class="inspector-title">
+      ① 전송된 HTTP 요청 URL
+      <span class="badge-latency" id="latencyBadge">0.00ms</span>
+    </div>
+    <div class="code-block" id="inspectUrl"></div>
+
+    <div class="inspector-title">
+      ② SQL 참고 예시 (실제 DB 실행 아님)
+    </div>
+    <div class="code-block" id="inspectSql"></div>
+
+    <div class="inspector-title">
+      ③ 백엔드 JSON 응답
+    </div>
+    <div class="code-block json" id="inspectJson"></div>
+
+    <div class="code-block">
+      실습 체크포인트
+
+      • 검색 입력 후 300ms 디바운스 확인
+      • AbortController 요청 취소 확인
+      • 뒤로 가기 및 새로고침 상태 복원 확인
+      • 커서 기반 데이터 중복 여부 확인
+    </div>
+  </div>
+</div>
+
+<script>
+  let mode = 'offset';
+
+  let state = {
+    page: 1,
+    limit: 10,
+    sort: 'latest',
+    search: '',
+    cursor: null,
+    hasNext: true
+  };
+
+  let cursorPosts = [];
+  let currentAbortController = null;
+  let debounceTimer = null;
+
+  function switchMode(newMode) {
+    clearTimeout(debounceTimer);
+    mode = newMode;
+
+    document.getElementById('tabOffset').classList.toggle(
+      'active', mode === 'offset'
+    );
+    document.getElementById('tabCursor').classList.toggle(
+      'active', mode === 'cursor'
+    );
+
+    document.getElementById('paginationBar').style.display =
+      mode === 'offset' ? 'flex' : 'none';
+
+    document.getElementById('cursorMoreWrap').style.display =
+      mode === 'cursor' ? 'flex' : 'none';
+
+    const sortSelect = document.getElementById('sortSelect');
+
+    if (mode === 'cursor') {
+      state.sort = 'latest';
+      sortSelect.value = 'latest';
+      sortSelect.disabled = true;
+      sortSelect.title = '커서 모드는 ID 내림차순으로 조회함';
+    } else {
+      sortSelect.disabled = false;
+      sortSelect.title = '';
+    }
+
+    state.page = 1;
+    state.cursor = null;
+    state.hasNext = true;
+    cursorPosts = [];
+
+    loadData(mode === 'offset');
+  }
+
+  async function loadData(pushHistory = false) {
+    if (currentAbortController) {
+      currentAbortController.abort();
+    }
+
+    const controller = new AbortController();
+    currentAbortController = controller;
+    const signal = controller.signal;
+    const requestMode = mode;
+    const requestCursor = state.cursor;
+
+    const t0 = performance.now();
+    let endpoint = '';
+
+    if (requestMode === 'offset') {
+      const q = new URLSearchParams({
+        page: state.page,
+        limit: state.limit,
+        sort: state.sort
+      });
+
+      if (state.search) {
+        q.set('search', state.search);
+      }
+
+      endpoint = `/api/posts?${q.toString()}`;
+
+      if (pushHistory) {
+        window.history.pushState({}, '', `?${q.toString()}`);
+      }
+    } else {
+      const q = new URLSearchParams({
+        limit: state.limit,
+        sort: 'latest'
+      });
+
+      if (state.search) {
+        q.set('search', state.search);
+      }
+
+      if (requestCursor) {
+        q.set('cursor', requestCursor);
+      }
+
+      endpoint = `/api/posts/cursor?${q.toString()}`;
+    }
+
+    document.getElementById('inspectUrl').textContent =
+      `GET ${endpoint}`;
+
+    updateSqlInspector(requestMode, requestCursor);
+
+    try {
+      const res = await fetch(endpoint, { signal });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const json = await res.json();
+
+      if (signal.aborted) return;
+
+      const t1 = performance.now();
+
+      document.getElementById('latencyBadge').textContent =
+        `${(t1 - t0).toFixed(2)}ms`;
+
+      document.getElementById('inspectJson').textContent =
+        JSON.stringify(json, null, 2);
+
+      if (requestMode === 'offset') {
+        state.page = json.meta.page;
+        renderTable(json.items);
+        renderPagination(json.meta.page, json.meta.totalPages);
+      } else {
+        if (!requestCursor) {
+          cursorPosts = [];
+        }
+
+        cursorPosts = [...cursorPosts, ...json.items];
+
+        state.cursor = json.meta.nextCursor;
+        state.hasNext = json.meta.hasNext;
+
+        renderTable(cursorPosts);
+
+        const btn = document.getElementById('btnMore');
+        btn.disabled = !state.hasNext;
+        btn.textContent = state.hasNext
+          ? '다음 10개 더 불러오기 (Keyset)'
+          : '더 이상 글이 없습니다';
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        console.log('[AbortController] 이전 요청 취소');
+      } else {
+        console.error('Fetch error:', err);
+      }
+    } finally {
+      if (currentAbortController === controller) {
+        currentAbortController = null;
+      }
+    }
+  }
+
+  function renderTable(items) {
+    const tb = document.getElementById('tableBody');
+
+    if (!items || items.length === 0) {
+      tb.innerHTML =
+        '<tr><td colspan="5" style="text-align:center;padding:30px;">검색 조건에 일치하는 글이 없습니다.</td></tr>';
+      return;
+    }
+
+    tb.innerHTML = items.map(p => `
+      <tr>
+        <td style="color:#0066cc;font-weight:bold;">${p.id}</td>
+        <td>${p.title}</td>
+        <td>${p.author}</td>
+        <td style="color:#0066cc;">${p.views.toLocaleString()}</td>
+        <td>${p.createdAt}</td>
+      </tr>
+    `).join('');
+  }
+
+  function renderPagination(page, totalPages) {
+    const bar = document.getElementById('paginationBar');
+    let html = '';
+
+    const start = Math.max(1, page - 3);
+    const end = Math.min(totalPages, page + 3);
+
+    if (page > 1) {
+      html += `<button class="page-btn" onclick="goToPage(1)">«</button>`;
+      html += `<button class="page-btn" onclick="goToPage(${page - 1})">‹</button>`;
+    }
+
+    for (let i = start; i <= end; i++) {
+      html += `
+        <button class="page-btn ${i === page ? 'active' : ''}"
+          onclick="goToPage(${i})">${i}</button>
+      `;
+    }
+
+    if (page < totalPages) {
+      html += `<button class="page-btn" onclick="goToPage(${page + 1})">›</button>`;
+      html += `<button class="page-btn" onclick="goToPage(${totalPages})">»</button>`;
+    }
+
+    bar.innerHTML = html;
+  }
+
+  function goToPage(page) {
+    state.page = page;
+    loadData(true);
+  }
+
+  function loadMoreCursor() {
+    if (state.hasNext && !currentAbortController) {
+      loadData(false);
+    }
+  }
+
+  function applySearch() {
+    clearTimeout(debounceTimer);
+
+    state.search = document.getElementById('searchInput').value.trim();
+    state.page = 1;
+    state.cursor = null;
+    state.hasNext = true;
+    cursorPosts = [];
+
+    loadData(mode === 'offset');
+  }
+
+  function updateSqlInspector(requestMode, requestCursor) {
+    const sqlBox = document.getElementById('inspectSql');
+
+    const searchClause = state.search
+      ? 'WHERE (title LIKE ? OR content LIKE ?) '
+      : '';
+
+    if (requestMode === 'offset') {
+      const offset = (state.page - 1) * state.limit;
+
+      let sortClause = 'created_at DESC, id DESC';
+
+      if (state.sort === 'views') {
+        sortClause = 'views DESC, id DESC';
+      } else if (state.sort === 'oldest') {
+        sortClause = 'created_at ASC, id ASC';
+      }
+
+      sqlBox.textContent =
+        `SELECT id, title, author, views, created_at FROM posts ` +
+        `${searchClause}ORDER BY ${sortClause} ` +
+        `LIMIT ${state.limit} OFFSET ${offset};`;
+    } else {
+      const conditions = [];
+
+      if (state.search) {
+        conditions.push('(title LIKE ? OR content LIKE ?)');
+      }
+
+      if (requestCursor) {
+        conditions.push('id < ?');
+      }
+
+      const whereClause = conditions.length
+        ? `WHERE ${conditions.join(' AND ')} `
+        : '';
+
+      sqlBox.textContent =
+        `SELECT id, title, author, views, created_at FROM posts ` +
+        `${whereClause}ORDER BY id DESC LIMIT ${state.limit + 1};`;
+    }
+  }
+
+  document.getElementById('searchInput').addEventListener('input', (e) => {
+    clearTimeout(debounceTimer);
+
+    if (currentAbortController) {
+      currentAbortController.abort();
+    }
+
+    const searchValue = e.target.value.trim();
+
+    debounceTimer = setTimeout(() => {
+      state.search = searchValue;
+      state.page = 1;
+      state.cursor = null;
+      state.hasNext = true;
+      cursorPosts = [];
+
+      loadData(mode === 'offset');
+    }, 300);
+  });
+
+  document.getElementById('sortSelect').addEventListener('change', (e) => {
+    if (mode === 'cursor') return;
+
+    clearTimeout(debounceTimer);
+
+    state.sort = e.target.value;
+    state.page = 1;
+    state.cursor = null;
+    cursorPosts = [];
+
+    loadData(true);
+  });
+
+  window.addEventListener('popstate', () => {
+    clearTimeout(debounceTimer);
+
+    const params = new URLSearchParams(window.location.search);
+
+    mode = 'offset';
+    state.page = parseInt(params.get('page'), 10) || 1;
+    const sort = params.get('sort') || 'latest';
+    state.sort = ['latest', 'oldest', 'views'].includes(sort)
+      ? sort
+      : 'latest';
+    state.search = params.get('search') || '';
+    state.cursor = null;
+    state.hasNext = true;
+    cursorPosts = [];
+
+    document.getElementById('searchInput').value = state.search;
+    document.getElementById('sortSelect').value = state.sort;
+    document.getElementById('sortSelect').disabled = false;
+
+    document.getElementById('tabOffset').classList.add('active');
+    document.getElementById('tabCursor').classList.remove('active');
+    document.getElementById('paginationBar').style.display = 'flex';
+    document.getElementById('cursorMoreWrap').style.display = 'none';
+
+    loadData(false);
+  });
+
+  window.addEventListener('DOMContentLoaded', () => {
+  const params = new URLSearchParams(window.location.search);
+
+  state.page = parseInt(params.get('page'), 10) || 1;
+
+  const sort = params.get('sort') || 'latest';
+  state.sort = ['latest', 'oldest', 'views'].includes(sort)
+    ? sort
+    : 'latest';
+
+  state.search = params.get('search') || '';
+
+  document.getElementById('searchInput').value = state.search;
+  document.getElementById('sortSelect').value = state.sort;
+
+  loadData(false);
+});
+</script>
+</body>
+</html>
